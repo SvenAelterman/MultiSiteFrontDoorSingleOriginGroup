@@ -183,10 +183,9 @@ resource "azurerm_cdn_frontdoor_route" "route" {
   # Associate the origins that belong to this origin group
   cdn_frontdoor_origin_ids = [for origin in local.all_origins_list : azurerm_cdn_frontdoor_origin.origin[origin.name].id if origin.site_key == each.key]
 
-  # TODO:
-  # cdn_frontdoor_rule_set_ids = [
-  #   azurerm_cdn_frontdoor_rule_set.rule_set.id
-  # ]
+  cdn_frontdoor_rule_set_ids = [
+    azurerm_cdn_frontdoor_rule_set.rule_set.id
+  ]
 
   forwarding_protocol    = "HttpsOnly"
   https_redirect_enabled = true
