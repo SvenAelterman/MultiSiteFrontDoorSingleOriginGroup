@@ -48,8 +48,8 @@ module "afd_waf_policy" {
       enabled  = true
       priority = 5
       # rate_limit_duration_in_minutes = 1
-      # rate_limit_threshold = 100
-      type = "MatchRule"
+      rate_limit_threshold = 100
+      type                 = "MatchRule"
 
       match_conditions = [
         {
