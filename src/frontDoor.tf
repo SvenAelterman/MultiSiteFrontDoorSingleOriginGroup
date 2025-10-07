@@ -189,7 +189,7 @@ resource "azurerm_cdn_frontdoor_rule" "redirect" {
 
   conditions {
     host_name_condition {
-      operator         = "Equals"
+      operator         = "Equal"
       match_values     = each.value.alternate_domain_names
       negate_condition = false
       transforms       = []
