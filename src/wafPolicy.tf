@@ -53,18 +53,18 @@ module "afd_waf_policy" {
 
       match_conditions = [
         {
-          match_variable   = "RemoteAddr"
-          operator         = "GeoMatch"
-          transforms       = []
-          match_values     = ["RU", "KP", "IR"] # Russia, North Korea, Iran
-          negate_condition = false
+          match_variable     = "RemoteAddr"
+          operator           = "GeoMatch"
+          transforms         = []
+          match_values       = ["RU", "KP", "IR"] # Russia, North Korea, Iran
+          negation_condition = false
         }
       ]
     },
     {
       name                           = "BaseRateLimit"
       action                         = "Log"
-      enabled                        = true
+      enabled                        = false
       priority                       = 10
       rate_limit_duration_in_minutes = 5
       rate_limit_threshold           = 100
@@ -80,7 +80,7 @@ module "afd_waf_policy" {
             "137.164.16.255/32",
             "192.111.213.0/24",
           ]
-          negate_condition = true
+          negation_condition = true
         }
       ]
     }
