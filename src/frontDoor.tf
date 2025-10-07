@@ -2,52 +2,6 @@ locals {
   front_door_sku_name = "Premium_AzureFrontDoor"
 }
 
-module "afd_waf_policy" {
-  source           = "Azure/avm-res-network-frontdoorwebapplicationfirewallpolicy/azurerm"
-  version          = "~> 0.1.0"
-  enable_telemetry = var.enable_telemetry
-
-  name                = lower(join("", regexall("[a-zA-Z0-9]", replace(replace(local.naming_structure, "{resource_type}", "afd"), "{region}", "global"))))
-  resource_group_name = local.resource_group_name
-  tags                = var.tags
-
-  mode = var.waf_mode
-  # Required for Microsoft-managed WAF rules
-  sku_name = local.front_door_sku_name
-
-  managed_rules = [
-    {
-      type    = "Microsoft_BotManagerRuleSet"
-      version = "1.1"
-      action  = "Block"
-
-      # overrides = [
-      #   {
-      #     rule_group_name = "UnknownBots"
-
-      #     rules = [{
-      #       rule_id = "Bot300500"
-      #       action  = "Block"
-      #       enabled = true
-      #     }]
-      #   }
-      # ]
-    },
-    # Do not use a DefaultRuleSet
-    # {
-    #   type    = "Microsoft_DefaultRuleSet"
-    #   version = "2.1"
-    #   action  = "Log"
-    # }
-  ]
-
-  request_body_check_enabled        = true
-  custom_block_response_status_code = 403
-  custom_block_response_body        = base64encode("Blocked by Azure WAF")
-
-  custom_rules = []
-}
-
 resource "azurerm_cdn_frontdoor_profile" "afd" {
   name                = replace(replace(local.naming_structure, "{resource_type}", "afd"), "{region}", "global")
   resource_group_name = local.resource_group_name
