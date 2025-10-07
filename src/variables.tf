@@ -24,9 +24,23 @@ variable "health_probe_path" {
   default     = "/"
 }
 
-variable "origin_ips" {
-  type        = map(string)
-  description = "A map of origin names to their IP addresses for the CDN Front Door."
+variable "dns_zone_resource_group_id" {
+  type        = string
+  description = "The resource group ID where the DNS zones are located."
+  default     = ""
+}
+
+variable "existing_resource_group_name" {
+  type        = string
+  description = "If provided, use this existing resource group name instead of creating a new one."
+  default     = ""
+}
+
+variable "origins" {
+  type = map(object({
+    origin_ips = map(string)
+  }))
+  description = "A map of origin groups and their IP addresses for the CDN Front Door."
   default     = {}
 }
 
@@ -34,6 +48,7 @@ variable "sites" {
   type = map(object({
     custom_domain_name     = string
     alternate_domain_names = list(string)
+    origin                 = string
   }))
   description = "A map of site names to their custom domain names for the CDN Front Door."
   default     = {}

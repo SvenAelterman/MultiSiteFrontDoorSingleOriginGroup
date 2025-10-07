@@ -8,12 +8,38 @@ module "afd_waf_policy" {
   enable_telemetry = var.enable_telemetry
 
   name                = lower(join("", regexall("[a-zA-Z0-9]", replace(replace(local.naming_structure, "{resource_type}", "afd"), "{region}", "global"))))
-  resource_group_name = module.resource_group_afd.name
+  resource_group_name = local.resource_group_name
   tags                = var.tags
 
   mode = var.waf_mode
   # Required for Microsoft-managed WAF rules
   sku_name = local.front_door_sku_name
+
+  managed_rules = [
+    {
+      type    = "Microsoft_BotManagerRuleSet"
+      version = "1.1"
+      action  = "Block"
+
+      # overrides = [
+      #   {
+      #     rule_group_name = "UnknownBots"
+
+      #     rules = [{
+      #       rule_id = "Bot300500"
+      #       action  = "Block"
+      #       enabled = true
+      #     }]
+      #   }
+      # ]
+    },
+    # Do not use a DefaultRuleSet
+    # {
+    #   type    = "Microsoft_DefaultRuleSet"
+    #   version = "2.1"
+    #   action  = "Log"
+    # }
+  ]
 
   request_body_check_enabled        = true
   custom_block_response_status_code = 403
@@ -24,10 +50,14 @@ module "afd_waf_policy" {
 
 resource "azurerm_cdn_frontdoor_profile" "afd" {
   name                = replace(replace(local.naming_structure, "{resource_type}", "afd"), "{region}", "global")
-  resource_group_name = module.resource_group_afd.name
+  resource_group_name = local.resource_group_name
   sku_name            = local.front_door_sku_name
 
   tags = var.tags
+
+  lifecycle {
+    ignore_changes = [tags]
+  }
 }
 
 resource "azurerm_cdn_frontdoor_endpoint" "fde" {
@@ -41,17 +71,17 @@ resource "azurerm_cdn_frontdoor_endpoint" "fde" {
 # While all origin groups will have the same origin IPs, they all need different host headers
 # Host headers cannot be dynamically rewritten
 resource "azurerm_cdn_frontdoor_origin_group" "origin_group" {
-  for_each = var.sites
+  for_each = var.origins
 
   name                     = "origin-${each.key}"
   cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.afd.id
 
   load_balancing {
-    sample_size                 = 4
-    successful_samples_required = 2
+    sample_size                        = 4
+    successful_samples_required        = 2
+    additional_latency_in_milliseconds = 150
   }
 
-  # TODO: Not working as expected
   session_affinity_enabled = false
 
   health_probe {
@@ -64,14 +94,13 @@ resource "azurerm_cdn_frontdoor_origin_group" "origin_group" {
 
 # Create a flattened map of all origins by combining the sites and origin_ips variables
 locals {
-  all_origins_list = flatten([for site_key, site in var.sites : [
-    for origin_key, origin_ip in var.origin_ips : [{
+  all_origins_list = flatten([for group_key, site in var.origins : [
+    for origin_key, origin_ip in site.origin_ips : [{
 
-      name        = "${site_key}-${origin_key}"
-      site_key    = site_key
-      domain_name = site.custom_domain_name
-      origin_key  = origin_key
-      origin_ip   = origin_ip
+      name       = "${group_key}-${origin_key}"
+      group_key  = group_key
+      origin_key = origin_key
+      origin_ip  = origin_ip
     }]
   ]])
 
@@ -83,59 +112,55 @@ resource "azurerm_cdn_frontdoor_origin" "origin" {
   for_each = local.all_origins_map
 
   name                          = "origin-${each.key}"
-  cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.origin_group[each.value.site_key].id
+  cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.origin_group[each.value.group_key].id
   enabled                       = true
 
   certificate_name_check_enabled = false # Requirement because host_name is an IP and there is no IP TLS
 
-  host_name          = each.value.origin_ip
-  origin_host_header = each.value.domain_name
-  priority           = 1
-  weight             = 1
-}
-
-# Create a single map of all custom domains
-locals {
-  primary_domain_names   = [for site in var.sites : site.custom_domain_name]
-  alternate_domain_names = flatten([for site in var.sites : site.alternate_domain_names])
-  all_domain_names       = concat(local.primary_domain_names, local.alternate_domain_names)
-
-  all_domain_names_map = { for domain in local.all_domain_names : domain => domain }
+  host_name = each.value.origin_ip
+  #origin_host_header = each.value.domain_name
+  priority = 2
+  weight   = 1000
 }
 
 # Create custom domains for all primary and secondary domains
 resource "azurerm_cdn_frontdoor_custom_domain" "domain" {
   for_each = local.all_domain_names_map
 
-  name                     = "domain--${replace(each.value, ".", "-")}"
+  name                     = "domain--${replace(each.key, ".", "-")}"
   cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.afd.id
-  host_name                = each.value
+  host_name                = each.value.domain_name
 
-  # TODO: Add dns_zone_id
+  # Add dns_zone_id
+  dns_zone_id = length(var.dns_zone_resource_group_id) > 0 ? "${var.dns_zone_resource_group_id}/providers/Microsoft.Network/dnsZones/${join(".", slice(split(".", each.value.domain_name), length(split(".", each.value.domain_name)) - 2, length(split(".", each.value.domain_name))))}" : null
 
   tls {
     certificate_type = "ManagedCertificate"
   }
 }
 
-# resource "azurerm_cdn_frontdoor_security_policy" "afd_security_policy" {
-#   name                     = "sec-${var.workload_name}"
-#   cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.afd.id
+resource "azurerm_cdn_frontdoor_security_policy" "afd_security_policy" {
+  name                     = "sec-${var.workload_name}"
+  cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.afd.id
 
-#   security_policies {
-#     firewall {
-#       cdn_frontdoor_firewall_policy_id = module.afd_waf_policy.resource_id
+  security_policies {
+    firewall {
+      cdn_frontdoor_firewall_policy_id = module.afd_waf_policy.resource_id
 
-#       # TODO: Associate the custom domains
-#       # association {
-#       #   domain {
-#       #     cdn_frontdoor_domain_id = azurerm_cdn_frontdoor_custom_domain.domain.id
-#       #   }
-#       #   patterns_to_match = ["/*"]
-#       # }
-#     }
-#   }
-# }
+      # Associate all custom domains to the security policy
+      association {
+        dynamic "domain" {
+          for_each = local.all_domain_names_map
+
+          content {
+            cdn_frontdoor_domain_id = azurerm_cdn_frontdoor_custom_domain.domain[domain.key].id
+          }
+        }
+        patterns_to_match = ["/*"]
+      }
+    }
+  }
+}
 
 resource "azurerm_cdn_frontdoor_rule_set" "rule_set" {
   name                     = join("", regexall("[a-z0-9]", lower("${var.workload_name}Redirects")))
@@ -173,7 +198,7 @@ resource "azurerm_cdn_frontdoor_rule" "redirect" {
 }
 
 resource "azurerm_cdn_frontdoor_route" "route" {
-  for_each = var.sites
+  for_each = var.origins
 
   name                          = "route-${each.key}"
   cdn_frontdoor_endpoint_id     = azurerm_cdn_frontdoor_endpoint.fde.id
@@ -181,7 +206,8 @@ resource "azurerm_cdn_frontdoor_route" "route" {
   enabled                       = true
 
   # Associate the origins that belong to this origin group
-  cdn_frontdoor_origin_ids = [for origin in local.all_origins_list : azurerm_cdn_frontdoor_origin.origin[origin.name].id if origin.site_key == each.key]
+  #cdn_frontdoor_origin_ids = [for origin in azurerm_cdn_frontdoor_origin.origin : origin.id ]
+  cdn_frontdoor_origin_ids = [for origin in local.all_origins_list : azurerm_cdn_frontdoor_origin.origin[origin.name].id if origin.group_key == each.key]
 
   cdn_frontdoor_rule_set_ids = [
     azurerm_cdn_frontdoor_rule_set.rule_set.id
@@ -197,8 +223,9 @@ resource "azurerm_cdn_frontdoor_route" "route" {
     "Https"
   ]
 
-  # Associate all custom domains (the primary and all alternates) that belong to this site
-  cdn_frontdoor_custom_domain_ids = concat([for domain in var.sites[each.key].alternate_domain_names : azurerm_cdn_frontdoor_custom_domain.domain[domain].id], [azurerm_cdn_frontdoor_custom_domain.domain[each.value.custom_domain_name].id])
+  # Associate all custom domains (the primary and all alternates) that belong to this origin group
+  #cdn_frontdoor_custom_domain_ids = [for domain in azurerm_cdn_frontdoor_custom_domain.domain : domain.id]
+  cdn_frontdoor_custom_domain_ids = [for domain_key, domain in local.all_domain_names_map : azurerm_cdn_frontdoor_custom_domain.domain[domain_key].id if domain.origin == each.key]
 
   link_to_default_domain = false
 }
