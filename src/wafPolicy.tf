@@ -76,9 +76,9 @@ module "afd_waf_policy" {
           operator       = "IPMatch"
           transforms     = []
           match_values = [
-            -"204.102.252.8",
-            -"137.164.16.255/32",
-            -"192.111.213.0/24",
+            "204.102.252.8",
+            "137.164.16.255/32",
+            "192.111.213.0/24",
           ]
           negate_condition = true
         }
